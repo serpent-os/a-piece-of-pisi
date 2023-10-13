@@ -3,5 +3,5 @@
 // SPDX-License-Identifier: MPL-2.0
 
 fn main() {
-    println!("HTODO: The Thing");
+    println!("TODO: The Thing");
 }
