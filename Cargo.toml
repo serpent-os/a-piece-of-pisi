@@ -6,3 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+clap = "4.4.6"
+indicatif = "0.17.7"
+reqwest = { version = "0.11.22", features = ["rustls-tls"] }
+serde = { version = "1.0.189", features = ["derive"] }
+serde_xml = "0.9.1"
+serde_yaml = "0.9.25"
