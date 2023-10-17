@@ -61,7 +61,7 @@ async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
         pbar.inc(len as u64);
     }
 
-    pbar.println(format!("Fetched {}", path.clone().dim()));
+    pbar.println(format!("{} {}", "Fetched".green(), path.clone().bold()));
 
     Ok(())
 }
@@ -85,6 +85,11 @@ async fn main() {
 
     let reader = LzmaReader::new_decompressor(xml_bar.wrap_read(cursor)).unwrap();
     let doc: eopkg::index::Index = from_reader(reader).unwrap();
+    xml_bar.println(format!(
+        "{} {}",
+        "Loaded".blue(),
+        "eopkg-index.xml.xz".bold()
+    ));
     xml_bar.finish_and_clear();
 
     let pkgs = doc
