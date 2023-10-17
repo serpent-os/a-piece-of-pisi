@@ -2,6 +2,56 @@
 //
 // SPDX-License-Identifier: MPL-2.0
 
-fn main() {
-    println!("TODO: The Thing");
+use std::{fs::File, io::Cursor, time::Duration};
+
+use a_piece_of_pisi::eopkg::{self, index::Package};
+use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use lzma::LzmaReader;
+use reqwest::Url;
+use serde_xml_rs::from_reader;
+
+use futures::future::join_all;
+
+/// Unfriendly fetch routine with no proper error handling.
+async fn fetch(multi: &MultiProgress, p: &Package) {
+    let full_url = format!("https://packages.getsol.us/unstable/{}", &p.package_uri);
+    let uri = Url::parse(&full_url).unwrap();
+    let path = uri.path_segments().unwrap().last().unwrap().to_string();
+    let mut r = reqwest::get(uri).await.unwrap();
+    let pbar = multi.add(ProgressBar::new(p.package_size));
+    pbar.set_style(
+        ProgressStyle::with_template(
+            "[{elapsed_precise}]  {bar:20.cyan/blue}  {bytes:>7}/{total_bytes:7} {wide_msg:>.dim}",
+        )
+        .unwrap()
+        .progress_chars("##-"),
+    );
+    pbar.set_message(path.clone());
+    pbar.enable_steady_tick(Duration::from_millis(150));
+
+    let mut output = File::create(path).unwrap();
+
+    while let Some(chunk) = &r.chunk().await.unwrap() {
+        let mut cursor = Cursor::new(chunk);
+        let len = chunk.len();
+        std::io::copy(&mut cursor, &mut output).unwrap();
+        pbar.inc(len as u64);
+    }
+}
+
+#[tokio::main]
+async fn main() {
+    let reader =
+        LzmaReader::new_decompressor(Cursor::new(include_bytes!("../test/eopkg-index.xml.xz")))
+            .unwrap();
+    let doc: eopkg::index::Index = from_reader(reader).unwrap();
+
+    let multi = MultiProgress::new();
+
+    let pkgs = doc
+        .packages
+        .iter()
+        .filter(|p| p.source.name == "glibc")
+        .collect::<Vec<_>>();
+    join_all(pkgs.iter().map(|m| async { fetch(&multi, m).await })).await;
 }
