@@ -69,11 +69,19 @@ async fn main() {
 
     let bytes = include_bytes!("../test/eopkg-index.xml.xz");
     let cursor = Cursor::new(bytes);
-    let reader = LzmaReader::new_decompressor(cursor).unwrap();
-    let xml_bar = ProgressBar::new_spinner();
+    let xml_bar = ProgressBar::new(bytes.len() as u64);
+    xml_bar.set_style(
+        ProgressStyle::with_template(
+            "[{elapsed_precise}]  {bar:20.red/white}  {bytes:>7}/{total_bytes:7} {wide_msg:>.dim}",
+        )
+        .unwrap()
+        .progress_chars("##-"),
+    );
     xml_bar.enable_steady_tick(Duration::from_millis(150));
     xml_bar.set_message("Loading eopkg-index.xml.xz");
-    let doc: eopkg::index::Index = from_reader(xml_bar.wrap_read(reader)).unwrap();
+
+    let reader = LzmaReader::new_decompressor(xml_bar.wrap_read(cursor)).unwrap();
+    let doc: eopkg::index::Index = from_reader(reader).unwrap();
     xml_bar.finish_and_clear();
 
     let pkgs = doc
