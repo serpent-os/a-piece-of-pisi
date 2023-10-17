@@ -14,7 +14,9 @@ dependencies = [
  "serde",
  "serde-xml-rs",
  "serde_yaml",
+ "thiserror",
  "tokio",
+ "url",
 ]
 
 [[package]]
