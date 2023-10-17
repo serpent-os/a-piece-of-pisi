@@ -6,7 +6,7 @@ use std::{fs::File, io::Cursor, time::Duration};
 
 use a_piece_of_pisi::eopkg::{self, index::Package};
 use crossterm::style::Stylize;
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{style::TemplateError, MultiProgress, ProgressBar, ProgressStyle};
 use lzma::LzmaReader;
 use reqwest::Url;
 use serde_xml_rs::from_reader;
@@ -28,9 +28,12 @@ pub enum Error {
 
     #[error("invalid uri")]
     InvalidURI,
+
+    #[error("invalid template: {0}")]
+    Template(#[from] TemplateError),
 }
 
-/// Unfriendly fetch routine with no proper error handling.
+/// Asynchronously fetch a package (TODO: Stop hardcoding the origin URI base!)
 async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
     let full_url = format!("https://packages.getsol.us/unstable/{}", &p.package_uri);
     let uri = Url::parse(&full_url)?;
@@ -45,8 +48,7 @@ async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
     pbar.set_style(
         ProgressStyle::with_template(
             "[{elapsed_precise}]  {bar:20.cyan/blue}  {bytes:>7}/{total_bytes:7} {wide_msg:>.dim}",
-        )
-        .unwrap()
+        )?
         .progress_chars("##-"),
     );
     pbar.set_message(path.clone());
@@ -67,7 +69,7 @@ async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
 }
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Error> {
     let multi = MultiProgress::new();
 
     let bytes = include_bytes!("../test/eopkg-index.xml.xz");
@@ -76,8 +78,7 @@ async fn main() {
     xml_bar.set_style(
         ProgressStyle::with_template(
             "[{elapsed_precise}]  {bar:20.red/white}  {bytes:>7}/{total_bytes:7} {wide_msg:>.dim}",
-        )
-        .unwrap()
+        )?
         .progress_chars("##-"),
     );
     xml_bar.enable_steady_tick(Duration::from_millis(150));
@@ -100,4 +101,5 @@ async fn main() {
     try_join_all(pkgs.iter().map(|m| async { fetch(&multi, m).await }))
         .await
         .unwrap();
+    Ok(())
 }
