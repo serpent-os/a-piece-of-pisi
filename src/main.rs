@@ -15,6 +15,8 @@ use futures::future::try_join_all;
 use thiserror::Error;
 use url::ParseError;
 
+use color_eyre::Result;
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("uri parse: {0}")]
@@ -69,7 +71,8 @@ async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Error> {
+async fn main() -> Result<()> {
+    color_eyre::install()?;
     let multi = MultiProgress::new();
 
     let bytes = include_bytes!("../test/eopkg-index.xml.xz");
@@ -98,8 +101,6 @@ async fn main() -> Result<(), Error> {
         .iter()
         .filter(|p| p.source.name == "glibc")
         .collect::<Vec<_>>();
-    try_join_all(pkgs.iter().map(|m| async { fetch(&multi, m).await }))
-        .await
-        .unwrap();
+    try_join_all(pkgs.iter().map(|m| async { fetch(&multi, m).await })).await?;
     Ok(())
 }

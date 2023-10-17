@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 clap = "4.4.6"
+color-eyre = "0.6.2"
 crossterm = "0.27.0"
 futures = { version = "0.3.28", features = ["futures-executor", "thread-pool"] }
 indicatif = "0.17.7"
