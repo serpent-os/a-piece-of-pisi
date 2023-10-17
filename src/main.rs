@@ -10,14 +10,36 @@ use lzma::LzmaReader;
 use reqwest::Url;
 use serde_xml_rs::from_reader;
 
-use futures::future::join_all;
+use futures::future::try_join_all;
+use thiserror::Error;
+use url::ParseError;
+
+#[derive(Debug, Error)]
+pub enum Error {
+    #[error("uri parse: {0}")]
+    URI(#[from] ParseError),
+
+    #[error("reqwest: {0}")]
+    Reqwest(#[from] reqwest::Error),
+
+    #[error("io: {0}")]
+    IO(#[from] std::io::Error),
+
+    #[error("invalid uri")]
+    InvalidURI,
+}
 
 /// Unfriendly fetch routine with no proper error handling.
-async fn fetch(multi: &MultiProgress, p: &Package) {
+async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
     let full_url = format!("https://packages.getsol.us/unstable/{}", &p.package_uri);
-    let uri = Url::parse(&full_url).unwrap();
-    let path = uri.path_segments().unwrap().last().unwrap().to_string();
-    let mut r = reqwest::get(uri).await.unwrap();
+    let uri = Url::parse(&full_url)?;
+    let path = uri
+        .path_segments()
+        .ok_or(Error::InvalidURI)?
+        .last()
+        .ok_or(Error::InvalidURI)?
+        .to_string();
+    let mut r = reqwest::get(uri).await?;
     let pbar = multi.add(ProgressBar::new(p.package_size));
     pbar.set_style(
         ProgressStyle::with_template(
@@ -31,12 +53,14 @@ async fn fetch(multi: &MultiProgress, p: &Package) {
 
     let mut output = File::create(path).unwrap();
 
-    while let Some(chunk) = &r.chunk().await.unwrap() {
+    while let Some(chunk) = &r.chunk().await? {
         let mut cursor = Cursor::new(chunk);
         let len = chunk.len();
-        std::io::copy(&mut cursor, &mut output).unwrap();
+        std::io::copy(&mut cursor, &mut output)?;
         pbar.inc(len as u64);
     }
+
+    Ok(())
 }
 
 #[tokio::main]
@@ -53,5 +77,7 @@ async fn main() {
         .iter()
         .filter(|p| p.source.name == "glibc")
         .collect::<Vec<_>>();
-    join_all(pkgs.iter().map(|m| async { fetch(&multi, m).await })).await;
+    try_join_all(pkgs.iter().map(|m| async { fetch(&multi, m).await }))
+        .await
+        .unwrap();
 }
