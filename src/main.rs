@@ -5,6 +5,7 @@
 use std::{fs::File, io::Cursor, time::Duration};
 
 use a_piece_of_pisi::eopkg::{self, index::Package};
+use crossterm::style::Stylize;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use lzma::LzmaReader;
 use reqwest::Url;
@@ -51,7 +52,7 @@ async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
     pbar.set_message(path.clone());
     pbar.enable_steady_tick(Duration::from_millis(150));
 
-    let mut output = File::create(path).unwrap();
+    let mut output = File::create(&path).unwrap();
 
     while let Some(chunk) = &r.chunk().await? {
         let mut cursor = Cursor::new(chunk);
@@ -59,6 +60,8 @@ async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
         std::io::copy(&mut cursor, &mut output)?;
         pbar.inc(len as u64);
     }
+
+    pbar.println(format!("Fetched {}", path.clone().dim()));
 
     Ok(())
 }
