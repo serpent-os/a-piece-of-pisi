@@ -65,12 +65,16 @@ async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
 
 #[tokio::main]
 async fn main() {
-    let reader =
-        LzmaReader::new_decompressor(Cursor::new(include_bytes!("../test/eopkg-index.xml.xz")))
-            .unwrap();
-    let doc: eopkg::index::Index = from_reader(reader).unwrap();
-
     let multi = MultiProgress::new();
+
+    let bytes = include_bytes!("../test/eopkg-index.xml.xz");
+    let cursor = Cursor::new(bytes);
+    let reader = LzmaReader::new_decompressor(cursor).unwrap();
+    let xml_bar = ProgressBar::new_spinner();
+    xml_bar.enable_steady_tick(Duration::from_millis(150));
+    xml_bar.set_message("Loading eopkg-index.xml.xz");
+    let doc: eopkg::index::Index = from_reader(xml_bar.wrap_read(reader)).unwrap();
+    xml_bar.finish_and_clear();
 
     let pkgs = doc
         .packages
