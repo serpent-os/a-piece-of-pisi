@@ -36,6 +36,8 @@ pub struct Package {
     pub part_of: Option<String>,
     #[serde(rename = "PackageURI")]
     pub package_uri: String,
+    #[serde(rename = "PackageSize")]
+    pub package_size: u64,
     pub package_hash: String,
     pub history: History,
     pub source: Source,
