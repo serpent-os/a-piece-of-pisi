@@ -14,7 +14,7 @@ use lzma::LzmaReader;
 use reqwest::Url;
 use serde_xml_rs::from_reader;
 
-use futures::future::try_join_all;
+use futures::{stream, StreamExt, TryStreamExt};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 use url::ParseError;
@@ -39,6 +39,7 @@ pub enum Error {
     Template(#[from] TemplateError),
 }
 
+#[derive(Default)]
 struct FetchedPackage {
     package: Package,
     hash: String,
@@ -109,17 +110,6 @@ async fn parse_index() -> Result<Index, Error> {
     Ok(doc)
 }
 
-/// Go and fetch the pkgs
-async fn fetch_packages<'a, T: IntoIterator<Item = &'a Package>>(
-    _index: &Index,
-    multi: &MultiProgress,
-    pkgs: T,
-) -> Result<Vec<FetchedPackage>, Error> {
-    let pkgs = pkgs.into_iter();
-    // Fetch them all
-    try_join_all(pkgs.map(|m| async { fetch(multi, m).await })).await
-}
-
 fn generate_install_script<'a, T: IntoIterator<Item = &'a FetchedPackage>>(pkgs: T) -> String {
     let pkgs = pkgs.into_iter();
     let script = "    %install_dir %(installroot)";
@@ -153,9 +143,16 @@ async fn main() -> Result<()> {
         .collect::<BTreeSet<String>>();
     eprintln!("Unique source IDs: {}", names.len());
 
-    let fetchables = index.packages.iter().filter(|p| p.source.name == "glibc");
-
-    let results = fetch_packages(&index, &multi, fetchables).await?;
+    let results: Vec<FetchedPackage> = stream::iter(
+        index
+            .packages
+            .iter()
+            .take(300)
+            .map(|f| async { fetch(&multi, f).await }),
+    )
+    .buffer_unordered(16)
+    .try_collect()
+    .await?;
     let sample = results.first().unwrap();
     let upstreams = results.iter().map(|p| {
         format!(
