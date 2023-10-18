@@ -137,7 +137,7 @@ fn generate_install_script<'a, T: IntoIterator<Item = &'a FetchedPackage>>(pkgs:
 async fn main() -> Result<()> {
     color_eyre::install()?;
 
-    let results = fetch_packages("nano").await?;
+    let results = fetch_packages("glibc").await?;
     let sample = results.first().unwrap();
     let upstreams = results.iter().map(|p| {
         format!(
@@ -155,6 +155,8 @@ async fn main() -> Result<()> {
         format!("name: {}", sample.package.source.name),
         format!("version: {}", sample.package.history.updates[0].version),
         format!("release: {}", sample.package.history.updates[0].release),
+        format!("summary: {}", sample.package.summary),
+        format!("description: {}", sample.package.description),
         format!("homepage: {}", homepage),
         "strip: false".to_string(),
         "license: ".to_string(),
