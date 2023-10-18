@@ -2,9 +2,12 @@
 //
 // SPDX-License-Identifier: MPL-2.0
 
-use std::{ffi::OsStr, fs::File, io::Cursor, path::PathBuf, time::Duration};
+use std::{collections::BTreeSet, ffi::OsStr, fs::File, io::Cursor, path::PathBuf, time::Duration};
 
-use a_piece_of_pisi::eopkg::{self, index::Package};
+use a_piece_of_pisi::eopkg::{
+    self,
+    index::{Index, Package},
+};
 use crossterm::style::Stylize;
 use indicatif::{style::TemplateError, MultiProgress, ProgressBar, ProgressStyle};
 use lzma::LzmaReader;
@@ -81,10 +84,7 @@ async fn fetch(multi: &MultiProgress, p: &Package) -> Result<FetchedPackage, Err
     })
 }
 
-/// Fetch all packages matching the given source ID
-async fn fetch_packages(id: &str) -> Result<Vec<FetchedPackage>, Error> {
-    let multi = MultiProgress::new();
-
+async fn parse_index() -> Result<Index, Error> {
     let bytes = include_bytes!("../test/eopkg-index.xml.xz");
     let cursor = Cursor::new(bytes);
     let xml_bar = ProgressBar::new(bytes.len() as u64);
@@ -106,13 +106,18 @@ async fn fetch_packages(id: &str) -> Result<Vec<FetchedPackage>, Error> {
     ));
     xml_bar.finish_and_clear();
 
-    let pkgs = doc
-        .packages
-        .iter()
-        .filter(|p| p.source.name.as_str() == id)
-        .collect::<Vec<_>>();
+    Ok(doc)
+}
+
+/// Go and fetch the pkgs
+async fn fetch_packages<'a, T: IntoIterator<Item = &'a Package>>(
+    _index: &Index,
+    multi: &MultiProgress,
+    pkgs: T,
+) -> Result<Vec<FetchedPackage>, Error> {
+    let pkgs = pkgs.into_iter();
     // Fetch them all
-    try_join_all(pkgs.iter().map(|m| async { fetch(&multi, m).await })).await
+    try_join_all(pkgs.map(|m| async { fetch(multi, m).await })).await
 }
 
 fn generate_install_script<'a, T: IntoIterator<Item = &'a FetchedPackage>>(pkgs: T) -> String {
@@ -137,7 +142,20 @@ fn generate_install_script<'a, T: IntoIterator<Item = &'a FetchedPackage>>(pkgs:
 async fn main() -> Result<()> {
     color_eyre::install()?;
 
-    let results = fetch_packages("glibc").await?;
+    let multi = MultiProgress::new();
+    let index = parse_index().await?;
+
+    // TODO: create a proper table.
+    let names = index
+        .packages
+        .iter()
+        .map(|p| p.source.name.clone())
+        .collect::<BTreeSet<String>>();
+    eprintln!("Unique source IDs: {}", names.len());
+
+    let fetchables = index.packages.iter().filter(|p| p.source.name == "glibc");
+
+    let results = fetch_packages(&index, &multi, fetchables).await?;
     let sample = results.first().unwrap();
     let upstreams = results.iter().map(|p| {
         format!(
