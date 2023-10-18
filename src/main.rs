@@ -119,7 +119,7 @@ async fn fetch_packages(id: &str) -> Result<Vec<FetchedPackage>, Error> {
 async fn main() -> Result<()> {
     color_eyre::install()?;
 
-    let results = fetch_packages("glibc").await?;
+    let results = fetch_packages("nano").await?;
     let sample = results.first().unwrap();
     let upstreams = results.iter().map(|p| {
         format!(
@@ -127,12 +127,27 @@ async fn main() -> Result<()> {
             p.package.package_uri, p.hash
         )
     });
+    let homepage = sample
+        .package
+        .source
+        .homepage
+        .clone()
+        .unwrap_or("no-homepage-set".to_string());
     let mut yml = vec![
         format!("name: {}", sample.package.source.name),
         format!("version: {}", sample.package.history.updates[0].version),
         format!("release: {}", sample.package.history.updates[0].release),
-        "upstreams:".to_string(),
+        format!("homepage: {}", homepage),
+        "license: ".to_string(),
     ];
+    yml.extend(
+        sample
+            .package
+            .licenses
+            .iter()
+            .map(|l| format!("    - {}", l)),
+    );
+    yml.push("upstreams:".to_string());
     yml.extend(upstreams);
     let steps = vec![
         "setup: |".to_string(),

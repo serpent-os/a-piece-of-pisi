@@ -25,6 +25,7 @@ pub struct Update {
 #[serde(rename_all = "PascalCase")]
 pub struct Source {
     pub name: String,
+    pub homepage: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -41,6 +42,8 @@ pub struct Package {
     pub package_hash: String,
     pub history: History,
     pub source: Source,
+    #[serde(rename = "License")]
+    pub licenses: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
