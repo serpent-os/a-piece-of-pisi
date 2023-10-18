@@ -156,6 +156,7 @@ async fn main() -> Result<()> {
         format!("version: {}", sample.package.history.updates[0].version),
         format!("release: {}", sample.package.history.updates[0].release),
         format!("homepage: {}", homepage),
+        "strip: false".to_string(),
         "license: ".to_string(),
     ];
     yml.extend(
