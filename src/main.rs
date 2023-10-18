@@ -2,7 +2,7 @@
 //
 // SPDX-License-Identifier: MPL-2.0
 
-use std::{fs::File, io::Cursor, time::Duration};
+use std::{ffi::OsStr, fs::File, io::Cursor, path::PathBuf, time::Duration};
 
 use a_piece_of_pisi::eopkg::{self, index::Package};
 use crossterm::style::Stylize;
@@ -115,6 +115,24 @@ async fn fetch_packages(id: &str) -> Result<Vec<FetchedPackage>, Error> {
     try_join_all(pkgs.iter().map(|m| async { fetch(&multi, m).await })).await
 }
 
+fn generate_install_script<'a, T: IntoIterator<Item = &'a FetchedPackage>>(pkgs: T) -> String {
+    let pkgs = pkgs.into_iter();
+    let script = "    %install_dir %(installroot)";
+    let zips = pkgs
+        .map(|p| {
+            let path = PathBuf::from(&p.package.package_uri);
+            format!(
+                "    unzip -o %(sourcedir)/{}\n    tar xf install.tar.xz -C %(installroot)",
+                path.file_name()
+                    .unwrap_or(OsStr::new("no-exist.eopkg"))
+                    .to_string_lossy()
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!("{}\n{}", script, zips)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
@@ -149,14 +167,7 @@ async fn main() -> Result<()> {
     );
     yml.push("upstreams:".to_string());
     yml.extend(upstreams);
-    let steps = vec![
-        "setup: |".to_string(),
-        "    # TODO".to_string(),
-        "build: |".to_string(),
-        "    # TODO".to_string(),
-        "install: |".to_string(),
-        "    # TODO".to_string(),
-    ];
+    let steps = vec!["install: |".to_string(), generate_install_script(&results)];
     yml.extend(steps);
     for i in yml {
         println!("{}", i);
