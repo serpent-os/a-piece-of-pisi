@@ -12,6 +12,7 @@ use reqwest::Url;
 use serde_xml_rs::from_reader;
 
 use futures::future::try_join_all;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use url::ParseError;
 
@@ -35,8 +36,13 @@ pub enum Error {
     Template(#[from] TemplateError),
 }
 
+struct FetchedPackage {
+    package: Package,
+    hash: String,
+}
+
 /// Asynchronously fetch a package (TODO: Stop hardcoding the origin URI base!)
-async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
+async fn fetch(multi: &MultiProgress, p: &Package) -> Result<FetchedPackage, Error> {
     let full_url = format!("https://packages.getsol.us/unstable/{}", &p.package_uri);
     let uri = Url::parse(&full_url)?;
     let path = uri
@@ -56,6 +62,7 @@ async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
     pbar.set_message(path.clone());
     pbar.enable_steady_tick(Duration::from_millis(150));
 
+    let mut hasher = Sha256::new();
     let mut output = File::create(&path).unwrap();
 
     while let Some(chunk) = &r.chunk().await? {
@@ -63,16 +70,19 @@ async fn fetch(multi: &MultiProgress, p: &Package) -> Result<(), Error> {
         let len = chunk.len();
         std::io::copy(&mut cursor, &mut output)?;
         pbar.inc(len as u64);
+        hasher.update(chunk);
     }
+    let hash = hasher.finalize();
 
     pbar.println(format!("{} {}", "Fetched".green(), path.clone().bold()));
-
-    Ok(())
+    Ok(FetchedPackage {
+        package: p.clone(),
+        hash: const_hex::encode(hash),
+    })
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    color_eyre::install()?;
+/// Fetch all packages matching the given source ID
+async fn fetch_packages(id: &str) -> Result<Vec<FetchedPackage>, Error> {
     let multi = MultiProgress::new();
 
     let bytes = include_bytes!("../test/eopkg-index.xml.xz");
@@ -99,8 +109,42 @@ async fn main() -> Result<()> {
     let pkgs = doc
         .packages
         .iter()
-        .filter(|p| p.source.name == "glibc")
+        .filter(|p| p.source.name.as_str() == id)
         .collect::<Vec<_>>();
-    try_join_all(pkgs.iter().map(|m| async { fetch(&multi, m).await })).await?;
+    // Fetch them all
+    try_join_all(pkgs.iter().map(|m| async { fetch(&multi, m).await })).await
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    color_eyre::install()?;
+
+    let results = fetch_packages("glibc").await?;
+    let sample = results.first().unwrap();
+    let upstreams = results.iter().map(|p| {
+        format!(
+            " - https://packages.getsol.us/unstable/{}:\n    unpack: false\n    hash: {}",
+            p.package.package_uri, p.hash
+        )
+    });
+    let mut yml = vec![
+        format!("name: {}", sample.package.source.name),
+        format!("version: {}", sample.package.history.updates[0].version),
+        format!("release: {}", sample.package.history.updates[0].release),
+        "upstreams:".to_string(),
+    ];
+    yml.extend(upstreams);
+    let steps = vec![
+        "setup: |".to_string(),
+        "    # TODO".to_string(),
+        "build: |".to_string(),
+        "    # TODO".to_string(),
+        "install: |".to_string(),
+        "    # TODO".to_string(),
+    ];
+    yml.extend(steps);
+    for i in yml {
+        println!("{}", i);
+    }
     Ok(())
 }
