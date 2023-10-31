@@ -10,7 +10,7 @@ clap = "4.4.6"
 color-eyre = "0.6.2"
 const-hex = "1.9.1"
 crossterm = "0.27.0"
-futures = { version = "0.3.28", features = ["futures-executor", "thread-pool"] }
+futures = { version = "0.3.29", features = ["futures-executor", "thread-pool"] }
 indicatif = "0.17.7"
 reqwest = { version = "0.11.22", features = ["rustls-tls"] }
 rust-lzma = "0.6.0"
