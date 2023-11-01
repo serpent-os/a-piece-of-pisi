@@ -91,7 +91,9 @@ mod test {
             .iter()
             .filter(|p| p.source.name == "zlib")
             .collect::<Vec<_>>();
-        assert_eq!(zlib.len(), 8);
-        assert_eq!(zlib[0].history.updates[0].version, "1.3");
+        assert_eq!(zlib.len(), 6);
+        let latest = &zlib[0].history.updates[0];
+        assert_eq!(latest.version, "1.3");
+        assert_eq!(latest.release, 26);
     }
 }
