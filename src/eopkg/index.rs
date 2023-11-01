@@ -13,6 +13,17 @@ pub struct History {
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
+pub struct Dependency {
+    #[serde(rename = "$value")]
+    pub value: String,
+}
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct RuntimeDependencies {
+    #[serde(rename = "Dependency")]
+    pub deps: Vec<Dependency>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct Update {
     pub release: u64,
     #[serde(rename = "Date")]
@@ -44,6 +55,8 @@ pub struct Package {
     pub source: Source,
     #[serde(rename = "License")]
     pub licenses: Vec<String>,
+    #[serde(rename = "RuntimeDependencies")]
+    pub run_deps: Option<RuntimeDependencies>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -95,5 +108,8 @@ mod test {
         let latest = &zlib[0].history.updates[0];
         assert_eq!(latest.version, "1.3");
         assert_eq!(latest.release, 26);
+
+        let dep = zlib[0].run_deps.clone().expect("No dependencies");
+        assert_eq!(dep.deps[0].value, "glibc");
     }
 }

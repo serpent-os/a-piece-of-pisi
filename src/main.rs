@@ -2,7 +2,13 @@
 //
 // SPDX-License-Identifier: MPL-2.0
 
-use std::{collections::BTreeSet, fs::File, io::Cursor, time::Duration};
+use std::{
+    collections::{BTreeMap, HashMap},
+    fs::{create_dir, remove_dir_all, File},
+    io::{Cursor, Write},
+    path::{Path, PathBuf},
+    time::Duration,
+};
 
 use a_piece_of_pisi::{
     converter::{convert, HashedPackage},
@@ -12,6 +18,7 @@ use a_piece_of_pisi::{
     },
 };
 use crossterm::style::Stylize;
+use dag::Dag;
 use indicatif::{style::TemplateError, MultiProgress, ProgressBar, ProgressStyle};
 use lzma::LzmaReader;
 use reqwest::Url;
@@ -23,6 +30,9 @@ use thiserror::Error;
 use url::ParseError;
 
 use color_eyre::Result;
+
+/// Limit concurrency to 8 jobs
+const CONCURRENCY_LIMIT: usize = 8;
 
 #[derive(Debug, Error)]
 pub enum Error {
@@ -40,10 +50,20 @@ pub enum Error {
 
     #[error("invalid template: {0}")]
     Template(#[from] TemplateError),
+
+    #[error("unknown package")]
+    UnknownPackage,
 }
 
 /// Asynchronously fetch a package
-async fn fetch(multi: &MultiProgress, p: &Package, origin: &Url) -> Result<HashedPackage, Error> {
+/// TODO: Filter already fetched!
+async fn fetch(
+    multi: &MultiProgress,
+    total: &ProgressBar,
+    p: &Package,
+    origin: &Url,
+    cache_dir: &Path,
+) -> Result<HashedPackage, Error> {
     let uri = origin.join(&p.package_uri)?;
     let path = uri
         .path_segments()
@@ -52,7 +72,7 @@ async fn fetch(multi: &MultiProgress, p: &Package, origin: &Url) -> Result<Hashe
         .ok_or(Error::InvalidURI)?
         .to_string();
     let mut r = reqwest::get(uri).await?;
-    let pbar = multi.add(ProgressBar::new(p.package_size));
+    let pbar = multi.insert_before(total, ProgressBar::new(p.package_size));
     pbar.set_style(
         ProgressStyle::with_template(
             "[{elapsed_precise}]  {bar:20.cyan/blue}  {bytes:>7}/{total_bytes:7} {wide_msg:>.dim}",
@@ -63,7 +83,8 @@ async fn fetch(multi: &MultiProgress, p: &Package, origin: &Url) -> Result<Hashe
     pbar.enable_steady_tick(Duration::from_millis(150));
 
     let mut hasher = Sha256::new();
-    let mut output = File::create(&path).unwrap();
+    let output_path = cache_dir.join(&path);
+    let mut output = File::create(&output_path).unwrap();
 
     while let Some(chunk) = &r.chunk().await? {
         let mut cursor = Cursor::new(chunk);
@@ -75,6 +96,8 @@ async fn fetch(multi: &MultiProgress, p: &Package, origin: &Url) -> Result<Hashe
     let hash = hasher.finalize();
 
     pbar.println(format!("{} {}", "Fetched".green(), path.clone().bold()));
+    total.inc(1);
+
     Ok(HashedPackage {
         package: p.clone(),
         hash: hash.into(),
@@ -112,28 +135,112 @@ async fn main() -> Result<()> {
 
     let multi = MultiProgress::new();
     let index = parse_index().await?;
-    let origin = Url::parse("https://packages.getsol.us/unstable")?;
+    let origin = Url::parse("https://packages.getsol.us/unstable/")?;
+    let cache_dir = PathBuf::from("cache");
+    if !cache_dir.exists() {
+        create_dir(&cache_dir)?;
+    }
 
-    // TODO: create a proper table.
-    let names = index
-        .packages
-        .iter()
-        .map(|p| p.source.name.clone())
-        .collect::<BTreeSet<String>>();
-    eprintln!("Unique source IDs: {}", names.len());
+    let mapping: BTreeMap<_, _> = index.packages.iter().map(|p| (p.name.clone(), p)).collect();
 
+    let mut base = mapping
+        .values()
+        .filter_map(|m| {
+            if let Some(component) = &m.part_of {
+                if component == "system.base" || component == "system.devel" {
+                    Some(m.name.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    let extensions = [
+        "libgcrypt",
+        "libgnutls",
+        "lsb-release",
+        "inxi",
+        "file",
+        "tree",
+        "which",
+        "man-db",
+    ];
+    base.extend(extensions.iter().map(|m| m.to_string()));
+
+    let mut graph: Dag<String> = Dag::new();
+
+    // Solve ...
+    let mut processing = base.clone();
+    while !&processing.is_empty() {
+        let mut next = vec![];
+        for pkg in processing.iter() {
+            let pkg = mapping.get(pkg).ok_or(Error::UnknownPackage)?;
+            let our_index = graph.add_node_or_get_index(pkg.name.clone());
+            if let Some(deps) = &pkg.run_deps {
+                for dep in &deps.deps {
+                    let child_index = if let Some(child_index) = graph.get_index(&dep.value) {
+                        // Already exists..
+                        child_index
+                    } else {
+                        // Create the child index.
+                        next.push(dep.value.clone());
+                        graph.add_node_or_get_index(dep.value.clone())
+                    };
+                    graph.add_edge(our_index, child_index);
+                }
+            }
+        }
+        processing = next;
+    }
+
+    // Fetch within the dependency set
+    let packages = graph.topo().cloned().collect::<Vec<_>>();
+
+    let total_progress = multi.add(
+        ProgressBar::new(packages.len() as u64).with_style(
+            ProgressStyle::with_template("\n|{bar:20.cyan/blue}| {pos}/{len}")
+                .unwrap()
+                .progress_chars("##-"),
+        ),
+    );
+    total_progress.tick();
+
+    let packages = packages.iter().filter_map(|p| mapping.get(p));
     let results: Vec<HashedPackage> = stream::iter(
-        index
-            .packages
-            .iter()
-            .filter(|p| p.source.name == "nano")
-            .map(|f| async { fetch(&multi, f, &origin).await }),
+        packages.map(|f| async { fetch(&multi, &total_progress, f, &origin, &cache_dir).await }),
     )
-    .buffer_unordered(16)
+    .buffer_unordered(CONCURRENCY_LIMIT)
     .try_collect()
     .await?;
 
-    println!("YML:\n\n");
-    println!("{}", convert(results, origin)?);
+    // Convert to a hashmap
+    let mut source_buckets: HashMap<String, Vec<&HashedPackage>> = HashMap::new();
+    for result in results.iter() {
+        let source_name = result.package.source.name.clone();
+        if let Some(bucket) = source_buckets.get_mut(&source_name) {
+            bucket.push(result)
+        } else {
+            source_buckets.insert(source_name, vec![result]);
+        };
+    }
+
+    let base_dir = PathBuf::from("binary-conversion");
+    if base_dir.exists() {
+        remove_dir_all(&base_dir)?;
+    }
+    create_dir(&base_dir)?;
+
+    // Conversion time.
+    for (source, packages) in total_progress.wrap_iter(source_buckets.iter()) {
+        let tree = base_dir.join(source);
+        create_dir(&tree)?;
+        let yml_path = tree.join("stone.yml");
+        let yml = convert(packages.clone(), origin.clone())?;
+        let mut file = File::create(yml_path)?;
+        file.write_all(yml.as_bytes())?;
+    }
     Ok(())
 }

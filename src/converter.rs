@@ -21,7 +21,7 @@ pub struct HashedPackage {
 
 /// For the given input packages, yield a functioning
 /// boulder recipe as a string
-pub fn convert(input: Vec<HashedPackage>, base_uri: Url) -> Result<String, Error> {
+pub fn convert(input: Vec<&HashedPackage>, base_uri: Url) -> Result<String, Error> {
     let mut upstreams = vec![];
     for pkg in input.iter() {
         let uri = base_uri.join(&pkg.package.package_uri)?.to_string();
@@ -42,13 +42,16 @@ pub fn convert(input: Vec<HashedPackage>, base_uri: Url) -> Result<String, Error
     let licenses = sample.package.licenses.iter().map(|l| format!("    - {l}"));
     let yml = vec![
         format!("name: {}", sample.package.source.name),
-        format!("version: {}", sample.package.history.updates[0].version),
+        format!("version: \"{}\"", sample.package.history.updates[0].version),
         format!("release: {}", sample.package.history.updates[0].release),
         format!("homepage: {}", homepage),
         "upstreams:".into(),
         upstreams.join("\n"),
         format!("summary: {}", sample.package.summary),
-        format!("description: {}", sample.package.description),
+        format!(
+            "description: |\n    {}",
+            sample.package.description.replace('\n', " ")
+        ),
         "strip: false".into(),
         "license: ".into(),
         licenses.collect::<Vec<String>>().join("\n"),
@@ -59,7 +62,7 @@ pub fn convert(input: Vec<HashedPackage>, base_uri: Url) -> Result<String, Error
     Ok(yml.join("\n"))
 }
 
-fn generate_install_script(input: &[HashedPackage], base_uri: &Url) -> Result<String, Error> {
+fn generate_install_script(input: &[&HashedPackage], base_uri: &Url) -> Result<String, Error> {
     let mut zips = vec![];
     for pkg in input.iter() {
         let url = base_uri.join(&pkg.package.package_uri)?;
