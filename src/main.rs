@@ -2,11 +2,14 @@
 //
 // SPDX-License-Identifier: MPL-2.0
 
-use std::{collections::BTreeSet, ffi::OsStr, fs::File, io::Cursor, path::PathBuf, time::Duration};
+use std::{collections::BTreeSet, fs::File, io::Cursor, time::Duration};
 
-use a_piece_of_pisi::eopkg::{
-    self,
-    index::{Index, Package},
+use a_piece_of_pisi::{
+    converter::{convert, HashedPackage},
+    eopkg::{
+        self,
+        index::{Index, Package},
+    },
 };
 use crossterm::style::Stylize;
 use indicatif::{style::TemplateError, MultiProgress, ProgressBar, ProgressStyle};
@@ -39,14 +42,8 @@ pub enum Error {
     Template(#[from] TemplateError),
 }
 
-#[derive(Default)]
-struct FetchedPackage {
-    package: Package,
-    hash: String,
-}
-
 /// Asynchronously fetch a package (TODO: Stop hardcoding the origin URI base!)
-async fn fetch(multi: &MultiProgress, p: &Package) -> Result<FetchedPackage, Error> {
+async fn fetch(multi: &MultiProgress, p: &Package) -> Result<HashedPackage, Error> {
     let full_url = format!("https://packages.getsol.us/unstable/{}", &p.package_uri);
     let uri = Url::parse(&full_url)?;
     let path = uri
@@ -79,9 +76,9 @@ async fn fetch(multi: &MultiProgress, p: &Package) -> Result<FetchedPackage, Err
     let hash = hasher.finalize();
 
     pbar.println(format!("{} {}", "Fetched".green(), path.clone().bold()));
-    Ok(FetchedPackage {
+    Ok(HashedPackage {
         package: p.clone(),
-        hash: const_hex::encode(hash),
+        hash: hash.into(),
     })
 }
 
@@ -110,24 +107,6 @@ async fn parse_index() -> Result<Index, Error> {
     Ok(doc)
 }
 
-fn generate_install_script<'a, T: IntoIterator<Item = &'a FetchedPackage>>(pkgs: T) -> String {
-    let pkgs = pkgs.into_iter();
-    let script = "    %install_dir %(installroot)";
-    let zips = pkgs
-        .map(|p| {
-            let path = PathBuf::from(&p.package.package_uri);
-            format!(
-                "    unzip -o %(sourcedir)/{}\n    tar xf install.tar.xz -C %(installroot)",
-                path.file_name()
-                    .unwrap_or(OsStr::new("no-exist.eopkg"))
-                    .to_string_lossy()
-            )
-        })
-        .collect::<Vec<_>>()
-        .join("\n");
-    format!("{}\n{}", script, zips)
-}
-
 #[tokio::main]
 async fn main() -> Result<()> {
     color_eyre::install()?;
@@ -143,52 +122,21 @@ async fn main() -> Result<()> {
         .collect::<BTreeSet<String>>();
     eprintln!("Unique source IDs: {}", names.len());
 
-    let results: Vec<FetchedPackage> = stream::iter(
+    let results: Vec<HashedPackage> = stream::iter(
         index
             .packages
             .iter()
-            .take(300)
+            .filter(|p| p.source.name == "nano")
             .map(|f| async { fetch(&multi, f).await }),
     )
     .buffer_unordered(16)
     .try_collect()
     .await?;
-    let sample = results.first().unwrap();
-    let upstreams = results.iter().map(|p| {
-        format!(
-            " - https://packages.getsol.us/unstable/{}:\n    unpack: false\n    hash: {}",
-            p.package.package_uri, p.hash
-        )
-    });
-    let homepage = sample
-        .package
-        .source
-        .homepage
-        .clone()
-        .unwrap_or("no-homepage-set".to_string());
-    let mut yml = vec![
-        format!("name: {}", sample.package.source.name),
-        format!("version: {}", sample.package.history.updates[0].version),
-        format!("release: {}", sample.package.history.updates[0].release),
-        format!("summary: {}", sample.package.summary),
-        format!("description: {}", sample.package.description),
-        format!("homepage: {}", homepage),
-        "strip: false".to_string(),
-        "license: ".to_string(),
-    ];
-    yml.extend(
-        sample
-            .package
-            .licenses
-            .iter()
-            .map(|l| format!("    - {}", l)),
+
+    println!("YML:\n\n");
+    println!(
+        "{}",
+        convert(results, Url::parse("https://packages.getsol.us/unstable")?)?
     );
-    yml.push("upstreams:".to_string());
-    yml.extend(upstreams);
-    let steps = vec!["install: |".to_string(), generate_install_script(&results)];
-    yml.extend(steps);
-    for i in yml {
-        println!("{}", i);
-    }
     Ok(())
 }
