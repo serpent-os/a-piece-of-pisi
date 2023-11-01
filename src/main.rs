@@ -42,10 +42,9 @@ pub enum Error {
     Template(#[from] TemplateError),
 }
 
-/// Asynchronously fetch a package (TODO: Stop hardcoding the origin URI base!)
-async fn fetch(multi: &MultiProgress, p: &Package) -> Result<HashedPackage, Error> {
-    let full_url = format!("https://packages.getsol.us/unstable/{}", &p.package_uri);
-    let uri = Url::parse(&full_url)?;
+/// Asynchronously fetch a package
+async fn fetch(multi: &MultiProgress, p: &Package, origin: &Url) -> Result<HashedPackage, Error> {
+    let uri = origin.join(&p.package_uri)?;
     let path = uri
         .path_segments()
         .ok_or(Error::InvalidURI)?
@@ -113,6 +112,7 @@ async fn main() -> Result<()> {
 
     let multi = MultiProgress::new();
     let index = parse_index().await?;
+    let origin = Url::parse("https://packages.getsol.us/unstable")?;
 
     // TODO: create a proper table.
     let names = index
@@ -127,16 +127,13 @@ async fn main() -> Result<()> {
             .packages
             .iter()
             .filter(|p| p.source.name == "nano")
-            .map(|f| async { fetch(&multi, f).await }),
+            .map(|f| async { fetch(&multi, f, &origin).await }),
     )
     .buffer_unordered(16)
     .try_collect()
     .await?;
 
     println!("YML:\n\n");
-    println!(
-        "{}",
-        convert(results, Url::parse("https://packages.getsol.us/unstable")?)?
-    );
+    println!("{}", convert(results, origin)?);
     Ok(())
 }
