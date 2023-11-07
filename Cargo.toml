@@ -15,7 +15,7 @@ futures = { version = "0.3.29", features = ["futures-executor", "thread-pool"] }
 indicatif = "0.17.7"
 reqwest = { version = "0.11.22", features = ["rustls-tls"] }
 rust-lzma = "0.6.0"
-serde = { version = "1.0.190", features = ["derive"] }
+serde = { version = "1.0.192", features = ["derive"] }
 serde-xml-rs = "0.6.0"
 serde_yaml = "0.9.27"
 sha2 = { version = "0.10.8", features = ["asm", "sha2-asm"] }
